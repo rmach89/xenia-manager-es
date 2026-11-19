@@ -1,0 +1,10 @@
+#!/bin/bash
+# Xenia Manager launcher (https://github.com/rmach89/xenia-manager-es)
+APP_DIR="/userdata/system/xenia-manager"
+export PYTHONPATH="${APP_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONDONTWRITEBYTECODE=1
+if [ -z "${DISPLAY}" ] && [ -z "${WAYLAND_DISPLAY}" ] && command -v getLocalXDisplay >/dev/null 2>&1; then
+    DISPLAY="$(getLocalXDisplay)"
+    export DISPLAY
+fi
+exec python3 -m xenia_manager "$@"
