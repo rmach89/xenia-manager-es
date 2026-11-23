@@ -148,7 +148,7 @@ def handle_launch(rom: str, emulator: Optional[str], launcher_pid: int, timeout:
 def _handle(rom: str, emulator: Optional[str], launcher_pid: int, timeout: float, late: bool) -> None:
     game = library.find(rom)
     key = game.key
-    settings = profiles.effective_settings(key)
+    settings = profiles.effective_settings(key, arcade=game.is_arcade)
     prof = profiles.load(key)
     selection = {f: s for f, s in prof.patches.items() if s}
     wants_patches = any(any(s.values()) for s in selection.values())
@@ -159,7 +159,7 @@ def _handle(rom: str, emulator: Optional[str], launcher_pid: int, timeout: float
     candidates = [v for v in P.variants() if emulator is None or v.key == emulator] or list(P.variants())
     before = {v.key: _mtime(v.toml) for v in candidates}
     started = time.monotonic()
-    log.info("launch %s (%s) via %s: waiting for config write", game.rom_name, key, emulator or "?")
+    log.info("launch %s (%s, %s) via %s: waiting for config write", game.rom_name, key, game.kind, emulator or "?")
 
     target: Optional[P.Variant] = None
     # If the launcher already wrote the config before we noticed it (possible

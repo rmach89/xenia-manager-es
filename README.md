@@ -21,9 +21,14 @@ Xenia Edge) and doesn't install an emulator of its own.
 | Save Manager | Back up, restore and export saves (to a folder or USB stick) |
 | Game Detection | Reads your Xbox 360 list and Title IDs from ISO, XEX, GoD/XBLA and `.xbox360` files |
 | Big Screen Mode | Fullscreen, controller-friendly UI started from EmulationStation |
+| Xbox Live Arcade unlock | Play arcade games as the full version instead of the trial |
+| Updater | Updates Xenia Manager itself from this repository |
 
 Also included: a desktop (F1) app, an uninstaller, a drop folder for DLC and
 updates, and on Batocera a per-game choice of Xenia build.
+
+Xenia Manager does **not** install or update Xenia itself; Batocera and HippOS
+already ship and update Xenia, Xenia Canary and Xenia Edge.
 
 ## Install
 
@@ -33,8 +38,17 @@ On the Batocera / HippOS machine, open a terminal (SSH, or **F1 → Applications
 curl -fsSL https://raw.githubusercontent.com/rmach89/xenia-manager-es/main/install.sh | bash
 ```
 
-Run the same command again to update; your profiles are kept. To install a
-specific release: `curl -fsSL .../install.sh | XM_REF=v1.0.0 bash`.
+To install a specific release: `curl -fsSL https://raw.githubusercontent.com/rmach89/xenia-manager-es/main/install.sh | XM_REF=v1.1.0 bash`.
+
+## Updating
+
+* In the app: **Check for updates** on the home screen (it also checks quietly
+  each time the app opens and tells you when a new version is out).
+* From a terminal: `xenia-manager update` (`--check` to only look, `--force` to reinstall).
+* Or run the install command again.
+
+Updates come from the branch or tag you installed from and keep your profiles,
+settings and backups.
 
 **Before first use**, start one Xbox 360 game with each Xenia build you plan to
 use. That lets the system create Xenia's config, which Xenia Manager then layers
@@ -66,6 +80,20 @@ back when the game exits.
 
 EmulationStation's own per-game "Advanced options" still work; Xenia Manager's
 settings win where both set the same thing.
+
+## Xbox Live Arcade: full game instead of trial
+
+Xenia runs arcade games in trial mode unless its `license_mask` setting grants a
+license. Set **Xbox Live Arcade games** on the home screen to:
+
+* **Full game**: the full-version license; unlocks most arcade games.
+* **All licenses**: every license bit, for the few games that still say Trial.
+* **Trial only** / **System default**: leave it to Xenia / your system.
+
+This only applies to games detected as Xbox Live Arcade titles, so disc games are
+unaffected. Each arcade game also has its own **Arcade license** setting on its page
+that wins over the home screen choice. (HippOS's Xenia Edge launcher doesn't set a
+license at all, so arcade games run there as trials until you turn this on.)
 
 ## DLC and title updates
 
@@ -108,6 +136,7 @@ xenia-manager install-content FILE…  install DLC or title updates
 xenia-manager download-patches       fetch the latest community patches
 xenia-manager backup-saves TITLEID   back up a game's saves
 xenia-manager recover                undo settings left by a crashed launch
+xenia-manager update [--check]       update Xenia Manager from GitHub
 ```
 
 ## Troubleshooting

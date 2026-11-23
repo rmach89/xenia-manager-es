@@ -50,8 +50,8 @@ CATALOG: list[Setting] = [
     Setting("GPU.framerate_limit", "Frame rate limit", "choice",
             _c(("Off", 0), ("30", 30), ("60", 60), ("120", 120), ("144", 144))),
     Setting("Content.license_mask", "Xbox Live Arcade license", "choice",
-            _c(("None (trial)", 0), ("Full license", 1), ("All licenses", -1)),
-            "Full license unlocks most arcade games."),
+            _c(("Full game", 1), ("All licenses", -1), ("Trial only", 0)),
+            "Full game unlocks most arcade games. Try All licenses if one still says Trial."),
     Setting("GPU.render_target_path_d3d12", "Render target path (D3D12)", "choice",
             _c(("Any", "any"), ("RTV", "rtv"), ("ROV", "rov"))),
     Setting("GPU.render_target_path_vulkan", "Render target path (Vulkan)", "choice",
@@ -85,6 +85,18 @@ CATALOG: list[Setting] = [
 PROTECTED = {"Storage.content_root", "Storage.storage_root", "Storage.cache_root",
              "Display.fullscreen", "HID.hid"}
 
+LICENSE_KEY = "Content.license_mask"
+# Shown for Xbox Live Arcade games. Xenia treats non-disc games as trials
+# unless license_mask grants a license; 1 is the full-game license, -1 grants
+# every license bit (needed by a few titles, can upset disc games).
+ARCADE_CHOICES: list[tuple[str, Optional[int]]] = [
+    ("System default", None), ("Full game", 1), ("All licenses", -1), ("Trial only", 0)]
+
+
+def license_label(value: Optional[int]) -> str:
+    return next((lbl for lbl, v in ARCADE_CHOICES if v == value), str(value))
+
+
 EMULATOR_CHOICES = [("System default", None), ("Xenia Canary", "xenia-canary"),
                     ("Xenia", "xenia"), ("Xenia Edge", "xenia-edge")]
 
@@ -102,14 +114,17 @@ class Profile:
     patches: dict[str, dict[str, bool]] = field(default_factory=dict)
     emulator: Optional[str] = None
     rom: Optional[str] = None
+    arcade_license: Optional[int] = None   # global profile only: license for every arcade game
 
     def to_json(self) -> dict:
         return {"key": self.key, "name": self.name, "settings": self.settings,
-                "patches": self.patches, "emulator": self.emulator, "rom": self.rom}
+                "patches": self.patches, "emulator": self.emulator, "rom": self.rom,
+                "arcade_license": self.arcade_license}
 
     @property
     def is_empty(self) -> bool:
-        return not self.settings and not any(self.patches.values()) and not self.emulator
+        return (not self.settings and not any(self.patches.values()) and not self.emulator
+                and self.arcade_license is None)
 
 
 def load(key: str) -> Profile:
@@ -118,7 +133,8 @@ def load(key: str) -> Profile:
     except (OSError, ValueError):
         return Profile(key)
     return Profile(key, data.get("name", ""), data.get("settings", {}) or {},
-                   data.get("patches", {}) or {}, data.get("emulator"), data.get("rom"))
+                   data.get("patches", {}) or {}, data.get("emulator"), data.get("rom"),
+                   data.get("arcade_license"))
 
 
 def save(profile: Profile) -> None:
@@ -140,8 +156,11 @@ def all_profiles() -> list[Profile]:
     return [load(f.stem) for f in sorted(P.PROFILES_DIR.glob("*.json"))]
 
 
-def effective_settings(key: str) -> dict[str, Any]:
-    merged = dict(load(GLOBAL).settings)
+def effective_settings(key: str, arcade: bool = False) -> dict[str, Any]:
+    glob = load(GLOBAL)
+    merged = dict(glob.settings)
+    if arcade and glob.arcade_license is not None:
+        merged[LICENSE_KEY] = glob.arcade_license
     if key != GLOBAL:
         merged.update(load(key).settings)
     return {k: v for k, v in merged.items() if k not in PROTECTED}

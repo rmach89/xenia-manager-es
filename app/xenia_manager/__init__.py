@@ -5,5 +5,5 @@ An independent, MIT-licensed project inspired by Xenia Manager
 that ship with the host OS rather than shipping its own emulator.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 APP_NAME = "Xenia Manager"

@@ -24,7 +24,12 @@ class Game:
     name: str
     title_id: Optional[str]
     image: Optional[str] = None
+    kind: str = "unknown"            # disc | arcade | god | demo | xex | unknown
     extra: dict = field(default_factory=dict)
+
+    @property
+    def is_arcade(self) -> bool:
+        return self.kind in ("arcade", "demo")
 
     @property
     def key(self) -> str:
@@ -104,14 +109,14 @@ def scan(roms: Path = P.ROMS_DIR, force: bool = False, progress=None) -> list[Ga
             continue
         sig = f"{st.st_size}:{int(st.st_mtime)}"
         cached = cache.get(str(path))
-        if cached and cached.get("sig") == sig:
-            tid = cached.get("title_id")
+        if cached and cached.get("sig") == sig and "kind" in cached:
+            tid, kind = cached.get("title_id"), cached["kind"]
         else:
-            tid = xbox.detect_title_id(path)
-        new_cache[str(path)] = {"sig": sig, "title_id": tid}
+            tid, kind = xbox.detect(path)
+        new_cache[str(path)] = {"sig": sig, "title_id": tid, "kind": kind}
         info = meta.get(str(path.resolve()), {})
         name = info.get("name") or (path.parent.name if path.name.lower() == "default.xex" else path.stem)
-        games.append(Game(str(path), name, tid, info.get("image")))
+        games.append(Game(str(path), name, tid, info.get("image"), kind))
     _save_cache(new_cache)
     games.sort(key=lambda g: g.name.lower())
     return games
@@ -121,14 +126,13 @@ def find(rom: str | Path) -> Game:
     """Look up a single ROM (used at launch time, so no full scan)."""
     path = Path(rom)
     cache = _load_cache()
-    tid = None
     try:
         st = path.stat()
         sig = f"{st.st_size}:{int(st.st_mtime)}"
         cached = cache.get(str(path))
-        tid = cached.get("title_id") if cached and cached.get("sig") == sig else None
+        if cached and cached.get("sig") == sig and cached.get("title_id") and "kind" in cached:
+            return Game(str(path), path.stem, cached["title_id"], kind=cached["kind"])
     except OSError:
         pass
-    if tid is None:
-        tid = xbox.detect_title_id(path)
-    return Game(str(path), path.stem, tid)
+    tid, kind = xbox.detect(path)
+    return Game(str(path), path.stem, tid, kind=kind)

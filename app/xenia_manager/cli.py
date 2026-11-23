@@ -78,6 +78,19 @@ def _cmd_backup(a) -> int:
     return 0
 
 
+def _cmd_update(a) -> int:
+    from . import updater
+    cur, remote, newer = updater.check(a.ref)
+    print(f"Installed {cur}, available {remote} ({a.ref or updater.installed_ref()})")
+    if a.check:
+        return 0
+    if not newer and not a.force:
+        print("Already up to date. Use --force to reinstall.")
+        return 0
+    print(updater.update(a.ref))
+    return 0
+
+
 def _cmd_status(a) -> int:
     print(f"Xenia Manager {__version__} on {P.os_label()}")
     for v in P.variants():
@@ -132,6 +145,12 @@ def main(argv=None) -> int:
     s = sub.add_parser("backup-saves", help="back up saves for a Title ID")
     s.add_argument("title_id")
     s.set_defaults(fn=_cmd_backup)
+
+    s = sub.add_parser("update", help="update Xenia Manager from GitHub")
+    s.add_argument("--check", action="store_true", help="only check, don't install")
+    s.add_argument("--force", action="store_true", help="reinstall even if up to date")
+    s.add_argument("--ref", help="branch or tag (default: the one you installed from)")
+    s.set_defaults(fn=_cmd_update)
 
     s = sub.add_parser("status", help="show detected Xenia builds and paths")
     s.set_defaults(fn=_cmd_status)

@@ -190,8 +190,11 @@ def title_from_name(name: str) -> Optional[str]:
     return None
 
 
-def detect_title_id(path: Path) -> Optional[str]:
-    """Best-effort Title ID for any game file EmulationStation lists."""
+def detect(path: Path) -> tuple[Optional[str], str]:
+    """Best-effort (Title ID, kind) for any game file EmulationStation lists.
+
+    kind is one of: disc, arcade, god (Games on Demand), demo, xex, unknown.
+    """
     p = path
     if p.suffix.lower() == ".xbox360":
         p = resolve_playlist(p)
@@ -201,11 +204,20 @@ def detect_title_id(path: Path) -> Optional[str]:
             p = xex
     suffix = p.suffix.lower()
     tid: Optional[str] = None
+    kind = "unknown"
     if suffix == ".iso":
-        tid = read_iso(p)
+        tid, kind = read_iso(p), "disc"
     elif suffix == ".xex":
-        tid = read_xex(p)
+        tid, kind = read_xex(p), "xex"
     elif p.is_file():
         info = read_stfs(p)
-        tid = info.title_id if info else None
-    return tid or title_from_name(path.name) or title_from_name(str(p))
+        if info:
+            tid = info.title_id
+            kind = {0x000D0000: "arcade", 0x00007000: "god", 0x00080000: "demo"}.get(info.content_type, "unknown")
+    if kind == "xex" and any(part.upper() == "000D0000" for part in p.parts):
+        kind = "arcade"
+    return tid or title_from_name(path.name) or title_from_name(str(p)), kind
+
+
+def detect_title_id(path: Path) -> Optional[str]:
+    return detect(path)[0]

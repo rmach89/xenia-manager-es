@@ -35,6 +35,11 @@ v = P.variant("xenia-canary")
 v.toml.parent.mkdir(parents=True)
 tomlio.save(v.toml, {"GPU": {"vsync": True, "framerate_limit": 0, "scale": 1.0}, "General": {"apply_patches": False}})
 (P.HOME / "batocera.conf").write_text("xbox360.emulator=xenia\n")
+tc.make_stfs(P.ROMS_DIR / "xbla" / "PKG", "58410B00", 0x000D0000, "Arcade")
+(P.ROMS_DIR / "Arcade.xbox360").write_text("xbla/PKG\n")
+from xenia_manager import updater  # noqa: E402
+updater._fetch = lambda path, ref, timeout=20: b'__version__ = "9.9.9"\n'
+updater.update = lambda ref=None: "ok"
 
 errors = []
 orig_call = core.App.call
@@ -93,7 +98,13 @@ def goto(label):
 
 
 settle()
-assert len(app.games) == 2, app.games
+assert len(app.games) == 3, app.games
+goto("Xbox Live Arcade games"); press(core.RIGHT)          # -> Full game, then All licenses
+goto("Check for updates"); press(core.ACCEPT); press(core.ACCEPT)   # update -> message -> quit
+assert not app.running
+app.running = True
+goto("Games"); goto("Arcade"); goto("Arcade license"); press(core.RIGHT, core.RIGHT)
+press(core.BACK, core.BACK)
 goto("Games"); goto("Game")                      # game screen
 assert app.stack[-1].title == "Game"
 goto("Title updates"); goto("From drop folder"); press(core.ACCEPT)   # install
@@ -122,6 +133,8 @@ assert app.running
 from xenia_manager import content, profiles  # noqa: E402
 prof = profiles.load(tc.TID)
 print("profile:", prof.settings, prof.patches, prof.emulator)
+assert profiles.load(profiles.GLOBAL).arcade_license == -1
+assert profiles.load("58410B00").settings["Content.license_mask"] == 0, profiles.load("58410B00").settings
 assert prof.settings.get("GPU.draw_resolution_scale_x+GPU.draw_resolution_scale_y") == 2
 assert prof.patches and prof.emulator == "xenia"
 assert any(i.enabled for i in content.list_items(tc.TID, xbox.TYPE_TU))

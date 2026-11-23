@@ -199,6 +199,7 @@ cat <<EOF
     - EmulationStation: $( [ "${OS}" = "batocera" ] && echo "Ports > Xenia Manager" || echo "Desktop Shortcuts > Xenia Manager" ) (Big Screen mode)
     - Desktop (F1):     Applications > Xenia Manager
   Drop DLC / title updates in: ${INBOX_DIR}
+  Update:    Xenia Manager > Check for updates, or: ${XM} update
   Uninstall: Xenia Manager > Uninstall, the "Xenia Manager Uninstaller" desktop entry,
              or: bash ${APP_DIR}/uninstall.sh
 

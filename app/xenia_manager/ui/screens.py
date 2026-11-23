@@ -58,6 +58,10 @@ class Home(Screen):
             Item("Install from drop folder", lambda: app.push(InboxScreen(app)), value=lambda: str(waiting),
                  hint=f"Copy DLC / title update files to {P.INBOX_DIR} (network share: xbox360-content)."),
             Item("Settings", header=True),
+            Item("Xbox Live Arcade games", left=lambda: _cycle_arcade(-1), right=lambda: _cycle_arcade(1),
+                 value=lambda: profiles.license_label(profiles.load(profiles.GLOBAL).arcade_license),
+                 hint="Full game unlocks arcade titles that start as trials. Try All licenses if one still "
+                      "says Trial. Applies to arcade games only; each game can override it."),
             Item("Settings for all games", lambda: app.push(ProfileScreen(app, profiles.GLOBAL, "All games")),
                  value=lambda: _count_label(len(profiles.load(profiles.GLOBAL).settings), "changed"),
                  hint="Defaults applied to every game. A game's own settings win over these."),
@@ -65,10 +69,59 @@ class Home(Screen):
                  hint="Fetches xenia-canary/game-patches. Needs an internet connection."),
             Item("Rescan games", lambda: scan_task(app, force=True)),
             Item("Xenia status", lambda: app.push(StatusScreen(app))),
+            Item("Check for updates", lambda: check_updates_task(app),
+                 value=lambda: (f"v{app.update_available} available" if getattr(app, "update_available", None)
+                                else f"v{__version__}"),
+                 hint="Downloads the newest Xenia Manager from GitHub. Profiles and settings are kept."),
             Item("About & credits", lambda: app.push(AboutScreen(app))),
             Item("Uninstall Xenia Manager", lambda: app.push(UninstallScreen(app))),
             Item("Exit", app.quit),
         ]
+
+
+def _cycle_arcade(step: int) -> None:
+    g = profiles.load(profiles.GLOBAL)
+    vals = [v for _, v in profiles.ARCADE_CHOICES]
+    idx = vals.index(g.arcade_license) if g.arcade_license in vals else 0
+    g.arcade_license = vals[(idx + step) % len(vals)]
+    profiles.save(g)
+
+
+def check_updates_task(app: App) -> None:
+    from .. import updater
+
+    def checked(res):
+        cur, remote, newer = res
+        if newer:
+            app.confirm("Update available", f"Xenia Manager {remote} is available (you have {cur}).\n"
+                        "Your profiles and settings are kept.", lambda: run_update_task(app), "Update")
+        else:
+            app.confirm("Up to date", f"You have the latest version ({cur}).",
+                        lambda: run_update_task(app), "Reinstall")
+    app.task("Checking for updates", lambda report: updater.check(), checked)
+
+
+def run_update_task(app: App) -> None:
+    from .. import updater
+    app.task("Updating Xenia Manager", lambda report: updater.update(), lambda out: app.message(
+        "Updated", "Xenia Manager was updated. It will close now; open it again to use the new version.",
+        then=app.quit))
+
+
+def background_update_check(app: App) -> None:
+    """Quietly check GitHub at startup so the home screen can show an update."""
+    import threading
+
+    def run() -> None:
+        try:
+            from .. import updater
+            _, remote, newer = updater.check()
+            if newer:
+                app.update_available = remote
+                app.toast(f"Update available: v{remote}")
+        except Exception:
+            pass  # offline is fine
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _count_label(n: int, word: str) -> str:
@@ -89,7 +142,7 @@ class GameList(Screen):
             mark = "*  " if g.key in custom else ""
             self.items.append(Item(
                 g.name, (lambda g=g: app.push(GameScreen(app, g))),
-                value=(lambda g=g, m=mark: m + (g.title_id or "no Title ID")),
+                value=(lambda g=g, m=mark: m + ("Arcade  " if g.is_arcade else "") + (g.title_id or "no Title ID")),
                 hint=g.rom_name + ("   (* = custom profile)" if mark else ""),
                 image=g.image if g.image and os.path.isfile(g.image) else None))
         if not self.items:
@@ -112,9 +165,16 @@ class GameScreen(Screen):
             prof.name, prof.rom = g.name, g.path
             if not prof.is_empty:
                 profiles.save(prof)
-        self.subtitle = f"Title ID {tid or 'unknown'}  |  {g.rom_name}"
+        kind = {"arcade": "Xbox Live Arcade", "demo": "Arcade demo", "god": "Games on Demand",
+                "disc": "Disc image", "xex": "Extracted game"}.get(g.kind, "")
+        self.subtitle = f"Title ID {tid or 'unknown'}  |  {kind + '  |  ' if kind else ''}{g.rom_name}"
         no_id = "This file's Title ID could not be read, so this isn't available."
         self.items = []
+        if g.is_arcade:
+            self.items.append(Item(
+                "Arcade license", left=lambda: self._cycle_license(-1), right=lambda: self._cycle_license(1),
+                value=self._license_value,
+                hint="Full game removes trial mode. Try All licenses if the game still says Trial."))
         if tid:
             tus = content.list_items(tid, xbox.TYPE_TU)
             dlc = content.list_items(tid, xbox.TYPE_DLC)
@@ -155,6 +215,26 @@ class GameScreen(Screen):
         if not prof.is_empty:
             self.items.append(Item("Reset this game's profile", lambda: app.confirm(
                 "Reset profile", f"Remove all custom settings and patch choices for {g.name}?", self._reset)))
+
+    def _license_value(self) -> str:
+        own = profiles.load(self.game.key).settings.get(profiles.LICENSE_KEY)
+        if own is not None:
+            return profiles.license_label(own)
+        glob = profiles.load(profiles.GLOBAL).arcade_license
+        return f"{profiles.license_label(glob)} (all arcade games)" if glob is not None else "System default"
+
+    def _cycle_license(self, step: int) -> None:
+        p = profiles.load(self.game.key)
+        vals = [v for _, v in profiles.ARCADE_CHOICES]
+        cur = p.settings.get(profiles.LICENSE_KEY)
+        idx = vals.index(cur) if cur in vals else 0
+        new = vals[(idx + step) % len(vals)]
+        if new is None:
+            p.settings.pop(profiles.LICENSE_KEY, None)
+        else:
+            p.settings[profiles.LICENSE_KEY] = new
+        p.name, p.rom = self.game.name, self.game.path
+        profiles.save(p)
 
     def _reset(self) -> None:
         if profiles.load(self.game.key).emulator:

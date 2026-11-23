@@ -184,6 +184,35 @@ def main():
     profiles.set_batocera_emulator("Halo Test.iso", None)
     assert "Halo Test" not in profiles.BATOCERA_CONF.read_text(); ok += 1
 
+    # Xbox Live Arcade: detection via .xbox360 playlist, license only for arcade games
+    make_stfs(roms / "xbla" / "58410B00" / "000D0000" / "PKG", "58410B00", 0x000D0000, "Arcade Game")
+    (roms / "Arcade Game.xbox360").write_text("xbla/58410B00/000D0000/PKG\n")
+    games = {g.name: g for g in library.scan(force=True)}
+    assert games["Arcade Game"].kind == "arcade" and games["Arcade Game"].title_id == "58410B00"; ok += 1
+    assert games["Halo Pretty"].kind == "disc" and not games["Halo Pretty"].is_arcade; ok += 1
+    g = profiles.load(profiles.GLOBAL); g.arcade_license = -1; profiles.save(g)
+    assert profiles.effective_settings("58410B00", arcade=True)["Content.license_mask"] == -1; ok += 1
+    assert "Content.license_mask" not in profiles.effective_settings(TID, arcade=False); ok += 1
+    a = profiles.load("58410B00"); a.settings = {"Content.license_mask": 1}; profiles.save(a)
+    assert profiles.effective_settings("58410B00", arcade=True)["Content.license_mask"] == 1; ok += 1
+    assert library.find(roms / "Arcade Game.xbox360").is_arcade; ok += 1
+    launcher = subprocess.Popen(["sleep", "2"])
+    t = __import__("threading").Thread(target=hook.handle_launch,
+                                       args=(str(roms / "Arcade Game.xbox360"), "xenia-canary", launcher.pid))
+    t.start(); time.sleep(0.3)
+    tomlio.save(v.toml, {"Content": {"license_mask": 0}, "GPU": {"gpu": "d3d12"}})
+    time.sleep(0.6)
+    assert tomlio.load(v.toml)["Content"]["license_mask"] == 1; ok += 1
+    launcher.wait(); t.join(timeout=10)
+    assert tomlio.load(v.toml)["Content"]["license_mask"] == 0; ok += 1
+
+    # updater: version compare with a stubbed download
+    from xenia_manager import updater
+    updater._fetch = lambda path, ref, timeout=20: b'__version__ = "9.0.1"\n'
+    assert updater.check() == (__import__("xenia_manager").__version__, "9.0.1", True); ok += 1
+    updater._fetch = lambda path, ref, timeout=20: b'__version__ = "0.1.0"\n'
+    assert updater.check()[2] is False; ok += 1
+
     # toml round trip incl. nested tables (Xenia Edge GPU.Debug)
     d = {"GPU": {"gpu": "vulkan", "Debug": {"x": 1.5}}, "A": {"s": 'q"\\'}}
     assert tomlio.load(Path(_w(tomlio.dumps(d)))) == d; ok += 1
