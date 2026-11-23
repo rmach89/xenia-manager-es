@@ -139,8 +139,18 @@ def handle_launch(rom: str, emulator: Optional[str], launcher_pid: int, timeout:
         os.close(fd)
     except FileExistsError:
         return  # another watcher already handles this launch
+    started = time.time()
     try:
-        _handle(rom, emulator, launcher_pid, timeout, late)
+        if emulator == "xenia-netplay":
+            log.info("launch %s via Xenia Netplay: config handled by the Netplay plugin", rom)
+        else:
+            _handle(rom, emulator, launcher_pid, timeout, late)
+        while _alive(launcher_pid):
+            time.sleep(0.5)
+        from . import playtime
+        playtime.record(library.find(rom).key, time.time() - started)
+    except Exception as e:
+        log.error("launch handling failed: %s", e)
     finally:
         lock.unlink(missing_ok=True)
 
@@ -156,7 +166,8 @@ def _handle(rom: str, emulator: Optional[str], launcher_pid: int, timeout: float
         log.info("launch %s (%s): no profile, nothing to do", game.rom_name, key)
         return
 
-    candidates = [v for v in P.variants() if emulator is None or v.key == emulator] or list(P.variants())
+    host = [v for v in P.variants() if v.key != "xenia-netplay"]
+    candidates = [v for v in host if emulator is None or v.key == emulator] or host
     before = {v.key: _mtime(v.toml) for v in candidates}
     started = time.monotonic()
     log.info("launch %s (%s, %s) via %s: waiting for config write", game.rom_name, key, game.kind, emulator or "?")

@@ -274,6 +274,22 @@ class App:
         if self.stack and self.dialog is None:
             self.stack[-1].on_resume()
 
+    def run_external(self, fn: Callable[[], Any]) -> Any:
+        """Hand the screen to another program (e.g. Xenia Netplay), then come back."""
+        pygame.display.quit()
+        try:
+            rc = fn()
+        finally:
+            pygame.display.init()
+            if self.bigscreen:
+                self.surf = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            else:
+                self.surf = pygame.display.set_mode((1280, 760), pygame.RESIZABLE)
+            pygame.display.set_caption(self.title)
+            self.images.clear()
+            self._fonts()
+        return rc
+
     # ---- dialogs ----
     def message(self, title: str, text: str, error: bool = False, then: Optional[Callable] = None) -> None:
         self.dialog = Dialog(("! " if error else "") + title, text, [("OK", then)])

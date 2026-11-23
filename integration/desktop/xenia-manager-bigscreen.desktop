@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xenia Manager
+Comment=Manage Xbox 360 DLC, title updates, patches, settings, saves and Netplay
+Exec=/userdata/system/xenia-manager/bin/xenia-manager ui --bigscreen
+Icon=/userdata/system/xenia-manager/assets/icon.png
+Terminal=false
+Categories=Game;

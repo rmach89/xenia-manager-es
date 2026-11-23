@@ -1,0 +1,2 @@
+[batocera_launch.emulators]
+xenia-netplay = xenia_manager_netplay:XeniaNetplay

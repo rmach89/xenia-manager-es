@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .. import __version__, content, library, patches, profiles, saves, tomlio, xbox
+from .. import __version__, content, gamer, library, netplay, onlinedata, patches, playtime, profiles, saves, tomlio, xbox
 from .. import platform as P
 from .core import App, Item, Screen
 
@@ -37,7 +38,11 @@ def scan_task(app: App, force: bool = False, then: Optional[Callable] = None) ->
 
 def download_patches_task(app: App) -> None:
     def work(report):
-        return patches.download(lambda d, t: report(d / t if t else -1, f"Downloaded {d // 1024} KB"))
+        n = patches.download(lambda d, t: report(d / t if t else -1, f"Downloaded {d // 1024} KB"))
+        if netplay.installed():
+            report(-1, "Downloading Netplay patches")
+            n += netplay.download_patches()
+        return n
     app.task("Downloading community patches", work,
              lambda n: app.message("Patches updated", f"{n} patch files are ready. Choose them per game under Patches."))
 
@@ -57,6 +62,12 @@ class Home(Screen):
                  hint="Title updates, DLC, patches, settings and saves for each game."),
             Item("Install from drop folder", lambda: app.push(InboxScreen(app)), value=lambda: str(waiting),
                  hint=f"Copy DLC / title update files to {P.INBOX_DIR} (network share: xbox360-content)."),
+            Item("Gamer profiles", lambda: app.push(GamerProfilesScreen(app)),
+                 value=lambda: str(len(gamer.profiles())),
+                 hint="Achievements, gamerscore, and profile backups."),
+            Item("Xenia Netplay", lambda: app.push(NetplayScreen(app)),
+                 value=lambda: (netplay.info() or {}).get("version", "Not installed"),
+                 hint="Install, update or remove Xenia Netplay (online play, runs under Wine)."),
             Item("Settings", header=True),
             Item("Xbox Live Arcade games", left=lambda: _cycle_arcade(-1), right=lambda: _cycle_arcade(1),
                  value=lambda: profiles.license_label(profiles.load(profiles.GLOBAL).arcade_license),
@@ -66,7 +77,9 @@ class Home(Screen):
                  value=lambda: _count_label(len(profiles.load(profiles.GLOBAL).settings), "changed"),
                  hint="Defaults applied to every game. A game's own settings win over these."),
             Item("Download latest patches", lambda: download_patches_task(app),
-                 hint="Fetches xenia-canary/game-patches. Needs an internet connection."),
+                 hint="Fetches xenia-canary/game-patches (and Netplay patches when Netplay is installed)."),
+            Item("Update online data", lambda: online_data_task(app), value=_online_age,
+                 hint="Compatibility ratings and the optimized-settings list. Refreshed weekly by itself."),
             Item("Rescan games", lambda: scan_task(app, force=True)),
             Item("Xenia status", lambda: app.push(StatusScreen(app))),
             Item("Check for updates", lambda: check_updates_task(app),
@@ -121,7 +134,28 @@ def background_update_check(app: App) -> None:
                 app.toast(f"Update available: v{remote}")
         except Exception:
             pass  # offline is fine
+        try:
+            if onlinedata.stale():
+                onlinedata.refresh()
+        except Exception:
+            pass
     threading.Thread(target=run, daemon=True).start()
+
+
+def _online_age() -> str:
+    a = onlinedata.age()
+    if a is None:
+        return "Never"
+    days = int(a // 86400)
+    return "Today" if days == 0 else f"{days} day(s) ago"
+
+
+def online_data_task(app: App) -> None:
+    app.task("Updating online data", lambda report: onlinedata.refresh(report),
+             lambda counts: app.message("Online data updated",
+                                        f"{counts.get('compat-canary', 0)} compatibility ratings\n"
+                                        f"{counts.get('compat-netplay', 0)} Netplay ratings\n"
+                                        f"{counts.get('optimized-index', 0)} games with optimized settings"))
 
 
 def _count_label(n: int, word: str) -> str:
@@ -142,8 +176,11 @@ class GameList(Screen):
             mark = "*  " if g.key in custom else ""
             self.items.append(Item(
                 g.name, (lambda g=g: app.push(GameScreen(app, g))),
-                value=(lambda g=g, m=mark: m + ("Arcade  " if g.is_arcade else "") + (g.title_id or "no Title ID")),
-                hint=g.rom_name + ("   (* = custom profile)" if mark else ""),
+                value=(lambda g=g, m=mark: m + ("Arcade  " if g.is_arcade else "")
+                       + (onlinedata.compat_label(g.title_id) if onlinedata.compat(g.title_id)
+                          else (g.title_id or "no Title ID"))),
+                hint=f"{g.rom_name}  |  {g.title_id or 'no Title ID'}  |  {playtime.fmt_duration(playtime.get(g.key)['seconds'])}"
+                     + ("   (* = custom profile)" if mark else ""),
                 image=g.image if g.image and os.path.isfile(g.image) else None))
         if not self.items:
             self.items = [Item(f"No games found in {P.ROMS_DIR}", enabled=False),
@@ -191,15 +228,42 @@ class GameScreen(Screen):
             self.items += [Item("Title updates", enabled=False, hint=no_id),
                            Item("DLC", enabled=False, hint=no_id),
                            Item("Patches", enabled=False, hint=no_id)]
-        self.items.append(Item("Game settings", lambda: app.push(ProfileScreen(app, g.key, g.name)),
+        self.items.append(Item("Game settings", lambda: app.push(ProfileScreen(app, g.key, g.name, g.title_id)),
                                value=lambda: _count_label(len(prof.settings), "changed")))
         if tid:
             self.items.append(Item("Saves", lambda: app.push(SavesScreen(app, g)),
                                    value=lambda: f"{len(saves.backups(tid))} backup(s)"))
+            ach = gamer.achievements_for(tid)
+            if ach:
+                p0, a0 = ach[0]
+                ach_val = f"{sum(a.earned for a in a0)} of {len(a0)}" + (f"  (+{len(ach) - 1} profiles)" if len(ach) > 1 else "")
+            else:
+                ach_val = "None yet"
+            self.items.append(Item("Achievements", lambda: app.push(AchievementsScreen(app, g)),
+                                   value=lambda: ach_val, enabled=bool(ach),
+                                   hint="" if ach else "Achievements appear here after you play with a profile signed in."))
         else:
             self.items.append(Item("Saves", enabled=False, hint=no_id))
+        self.items.append(Item("Play time", value=lambda: playtime.summary(g.key),
+                               options=lambda: app.confirm("Reset play time", f"Reset play time for {g.name}?",
+                                                           lambda: playtime.reset(g.key), "Reset"),
+                               hint="Counted when you play from EmulationStation.  X: reset"))
+        if tid:
+            c = onlinedata.compat(tid)
+            state = c.get("state", "Unknown") if c else None
+            self.items.append(Item(
+                "Compatibility (Canary)", lambda: self._compat_info(c),
+                value=lambda: state or ("Not listed" if onlinedata.age() is not None else "Update online data"),
+                hint=onlinedata.STATE_HELP.get(state or "", "From the xenia-canary/game-compatibility tracker.")))
+            nps = onlinedata.netplay_status(tid)
+            if nps:
+                self.items.append(Item("Netplay compatibility", value=lambda: nps,
+                                       hint="From the Xenia Netplay compatibility list."))
+        if netplay.installed() and P.detect_os() != "batocera":
+            self.items.append(Item("Play with Xenia Netplay", lambda: app.run_external(lambda: netplay.launch(g.path)),
+                                   hint="Starts this game in Xenia Netplay (under Wine)."))
         if P.detect_os() == "batocera":
-            choices = profiles.EMULATOR_CHOICES
+            choices = profiles.emulator_choices()
 
             def cycle(step: int) -> None:
                 p = profiles.load(g.key)
@@ -215,6 +279,15 @@ class GameScreen(Screen):
         if not prof.is_empty:
             self.items.append(Item("Reset this game's profile", lambda: app.confirm(
                 "Reset profile", f"Remove all custom settings and patch choices for {g.name}?", self._reset)))
+
+    def _compat_info(self, c) -> None:
+        if not c:
+            self.app.message("Compatibility", "This game isn't in the compatibility list yet, or online data "
+                                              "hasn't been downloaded. Use Update online data on the home screen.")
+            return
+        st = c.get("state", "Unknown")
+        self.app.message(f"Compatibility: {st}", f"{onlinedata.STATE_HELP.get(st, '')}\n\n"
+                         f"Reported on the Xenia Canary tracker:\n{c.get('url', '')}")
 
     def _license_value(self) -> str:
         own = profiles.load(self.game.key).settings.get(profiles.LICENSE_KEY)
@@ -387,9 +460,10 @@ def _fmt(v: Any) -> str:
 
 
 class ProfileScreen(Screen):
-    def __init__(self, app: App, key: str, label: str):
+    def __init__(self, app: App, key: str, label: str, title_id: Optional[str] = None):
         super().__init__(app)
         self.key = key
+        self.title_id = title_id
         self.title = f"Settings - {label}"
 
     def build(self) -> None:
@@ -406,6 +480,12 @@ class ProfileScreen(Screen):
                 value=(lambda s=s, o=options: self._label(s, o)),
                 options=(lambda s=s: self._set(s.key, None)),
                 hint=s.help))
+        if self.title_id:
+            avail = onlinedata.has_optimized(self.title_id)
+            self.items.insert(0, Item(
+                "Apply community optimized settings", self._optimized,
+                value=lambda: "Available" if avail else ("Not listed" if onlinedata.age() is not None else "Check"),
+                hint="Recommended settings for this game from the community optimized-settings list."))
         n_raw = len([k for k in prof.settings if k not in {s.key for s in profiles.CATALOG}])
         self.items.append(Item("More settings...", lambda: self.app.push(RawSettingsScreen(self.app, self.key)),
                                value=lambda: _count_label(n_raw, "changed"),
@@ -413,6 +493,26 @@ class ProfileScreen(Screen):
         if prof.settings:
             self.items.append(Item("Reset all settings", lambda: self.app.confirm(
                 "Reset", "Put every setting back to default?", self._reset_all)))
+
+    def _optimized(self) -> None:
+        tid = self.title_id
+
+        def done(settings: dict) -> None:
+            usable = {k: v for k, v in settings.items() if k not in profiles.PROTECTED}
+            if not usable:
+                self.app.message("Nothing to apply", "The optimized settings for this game are empty.")
+                return
+            lines = "\n".join(f"{k} = {_fmt(v)}" for k, v in list(usable.items())[:10])
+            more = f"\n...and {len(usable) - 10} more" if len(usable) > 10 else ""
+
+            def apply() -> None:
+                prof = profiles.load(self.key)
+                prof.settings.update(usable)
+                profiles.save(prof)
+                self.app.toast(f"Applied {len(usable)} setting(s)")
+            self.app.confirm("Optimized settings", f"Add these to this game's settings?\n{lines}{more}", apply, "Apply")
+
+        self.app.task("Fetching optimized settings", lambda report: onlinedata.optimized_settings(tid), done)
 
     def _label(self, s: profiles.Setting, options) -> str:
         cur = profiles.load(self.key).settings.get(s.key)
@@ -639,6 +739,205 @@ class StatusScreen(Screen):
         ]
 
 
+class NetplayScreen(Screen):
+    title = "Xenia Netplay"
+
+    def build(self) -> None:
+        app = self.app
+        inf = netplay.info()
+        bato = P.detect_os() == "batocera"
+        self.subtitle = ("AdrianCassar's Xenia Canary fork with online play. Runs under Wine; "
+                         "shares saves, DLC and updates with your other Xenia builds.")
+        self.items = [Item("Installed version", value=lambda: f"{inf['version']} ({inf.get('channel', 'stable')})"
+                           if inf else "Not installed", hint=str(P.NETPLAY_DIR))]
+        self.items.append(Item("Install / update (stable)" if inf else "Install Xenia Netplay (stable)",
+                               lambda: self._install("stable"),
+                               hint="Latest release from github.com/AdrianCassar/xenia-canary."))
+        self.items.append(Item("Install latest nightly build", lambda: self._install("nightly"),
+                               hint="Newest test build. May be less stable."))
+        if inf:
+            self.items.append(Item("Download Netplay patches", lambda: app.task(
+                "Downloading Netplay patches", lambda report: netplay.download_patches(),
+                lambda n: app.message("Netplay patches", f"{n} patch files ready. Pick them under a game's Patches."))))
+            if bato:
+                self.items += [
+                    Item("Batocera", header=True),
+                    Item("Use Netplay for every Xbox 360 game", self._toggle_default,
+                         value=lambda: "On" if profiles.get_system_emulator() == "xenia-netplay" else "Off",
+                         hint="Or choose it per game: game page > Xenia build."),
+                    Item("Emulator link", self._relink, value=_plugin_state,
+                         hint="The xenia_manager service links Netplay into Batocera. Select to re-link now."),
+                ]
+            else:
+                self.items.append(Item("Start Netplay games from their game page", enabled=False,
+                                       hint="Games > pick a game > Play with Xenia Netplay."))
+            self.items.append(Item("Remove Xenia Netplay", lambda: app.confirm(
+                "Remove Netplay", "Delete Xenia Netplay? Your saves, DLC and updates are kept.",
+                self._remove, "Remove")))
+
+    def _install(self, channel: str) -> None:
+        def work(report):
+            return netplay.install(channel, lambda d, t: report(d / t if t else -1, f"Downloaded {d // (1024 * 1024)} MB"))
+
+        def done(tag):
+            if P.detect_os() == "batocera":
+                _run_service("start")
+                msg = (f"Xenia Netplay {tag} is installed. Choose it per game (game page > Xenia build) "
+                       "or for every game on this screen.")
+            else:
+                msg = f"Xenia Netplay {tag} is installed. Start games with it from their game page."
+            self.app.message("Netplay installed", msg)
+        self.app.task("Installing Xenia Netplay", work, done)
+
+    def _toggle_default(self) -> None:
+        prev_file = P.DATA_DIR / "previous-xbox360-emulator"
+        if profiles.get_system_emulator() == "xenia-netplay":
+            try:
+                prev = prev_file.read_text().strip() or None
+            except OSError:
+                prev = None
+            profiles.set_system_emulator(prev)
+        else:
+            prev_file.write_text(profiles.get_system_emulator() or "")
+            profiles.set_system_emulator("xenia-netplay")
+
+    def _relink(self) -> None:
+        _run_service("start")
+        self.app.toast("Linked" if _plugin_state() == "Linked" else "Link failed - see the log")
+
+    def _remove(self) -> None:
+        netplay.uninstall()
+        self.app.toast("Xenia Netplay removed")
+
+
+def _plugin_state() -> str:
+    import site
+    try:
+        user_site = Path(site.getusersitepackages())
+    except Exception:
+        return "Unknown"
+    return "Linked" if (user_site / "xenia_manager_netplay.py").exists() else "Not linked"
+
+
+def _run_service(action: str) -> None:
+    import subprocess
+    svc = P.HOME / "services" / "xenia_manager"
+    if svc.exists():
+        subprocess.run(["bash", str(svc), action], capture_output=True, timeout=60)
+
+
+# ---------------------------------------------------------------------------
+class GamerProfilesScreen(Screen):
+    title = "Gamer profiles"
+
+    def build(self) -> None:
+        app = self.app
+        profs = gamer.profiles()
+        self.subtitle = "Profiles Xenia created. Shown by profile ID (XUID)."
+        self.items = []
+        for p in profs:
+            gs, total = p.gamerscore()
+            self.items.append(Item(f"Profile {p.xuid}", (lambda p=p: app.push(GamerProfileScreen(app, p))),
+                                   value=(lambda gs=gs, t=total, n=len(p.titles()): f"{gs} / {t} G  |  {n} game(s)")))
+        if not profs:
+            self.items.append(Item("No profiles yet", enabled=False,
+                                   hint="Create a profile inside Xenia (Guide button), then it shows up here."))
+        self.items += [
+            Item("Tools", header=True),
+            Item("Import a profile from a zip...", lambda: app.push(FileBrowser(
+                app, P.BACKUP_DIR / "profiles" if (P.BACKUP_DIR / "profiles").is_dir() else P.USERDATA, self._import))),
+        ]
+
+    def _import(self, path: Path) -> None:
+        self.app.confirm("Import profile", f"Import {path.name}?\nExisting files for that profile are backed up first.",
+                         lambda: self.app.message("Imported", f"{gamer.import_profile(path)} file(s) restored."),
+                         "Import")
+
+
+class GamerProfileScreen(Screen):
+    def __init__(self, app: App, profile: gamer.Profile):
+        super().__init__(app)
+        self.profile = profile
+        self.title = f"Profile {profile.xuid}"
+
+    def build(self) -> None:
+        app, p = self.app, self.profile
+        gs, total = p.gamerscore()
+        self.subtitle = f"Gamerscore {gs} / {total}"
+        self.items = [
+            Item("Back up profile and its saves", lambda: self._backup(True)),
+            Item("Back up profile only", lambda: self._backup(False)),
+            Item("Export to...", lambda: app.push(ChoiceScreen(app, "Export profile to", [
+                (lbl, (lambda d=d: self._export(d))) for lbl, d in saves.export_destinations()]))),
+            Item("Games", header=True),
+        ]
+        for t in p.titles():
+            self.items.append(Item(
+                t.name or t.title_id, (lambda t=t: app.push(TitleAchievementsScreen(app, p, t.title_id, t.name))),
+                value=(lambda t=t: f"{t.unlocked}/{t.achievements}  |  {t.gamerscore}/{t.gamerscore_total} G"),
+                hint=t.title_id + (f"  |  last played {time.strftime('%Y-%m-%d', time.localtime(t.last_played))}"
+                                   if t.last_played else "")))
+        if not p.titles():
+            self.items.append(Item("No games recorded yet", enabled=False))
+
+    def _backup(self, with_saves: bool) -> None:
+        out = gamer.backup_profile(self.profile, include_saves=with_saves)
+        self.app.message("Backed up", str(out))
+
+    def _export(self, dest: Path) -> None:
+        out = gamer.backup_profile(self.profile, include_saves=True, dest_dir=dest)
+        self.app.pop()
+        self.app.message("Exported", str(out))
+
+
+def _achievement_items(achs: list) -> list[Item]:
+    items = []
+    for a in achs:
+        if a.earned:
+            when = time.strftime("%Y-%m-%d", time.localtime(a.unlock_time)) if a.unlock_time else ""
+            items.append(Item(a.name, value=(lambda a=a, w=when: f"{a.gamerscore} G  |  {w or 'Unlocked'}"),
+                              hint=a.description))
+        elif a.secret:
+            items.append(Item("Secret achievement", value=(lambda a=a: f"{a.gamerscore} G  |  Locked"),
+                              hint="Keep playing to reveal it."))
+        else:
+            items.append(Item(a.name, value=(lambda a=a: f"{a.gamerscore} G  |  Locked"),
+                              hint=a.locked_description or a.description))
+    return items
+
+
+class TitleAchievementsScreen(Screen):
+    def __init__(self, app: App, profile: gamer.Profile, title_id: str, name: str):
+        super().__init__(app)
+        self.profile, self.title_id = profile, title_id
+        self.title = f"Achievements - {name or title_id}"
+
+    def build(self) -> None:
+        achs = self.profile.achievements(self.title_id)
+        self.subtitle = (f"Profile {self.profile.xuid}  |  {sum(a.earned for a in achs)} of {len(achs)} unlocked  |  "
+                         f"{sum(a.gamerscore for a in achs if a.earned)} G")
+        self.items = _achievement_items(achs) or [Item("No achievement data for this game", enabled=False)]
+
+
+class AchievementsScreen(Screen):
+    def __init__(self, app: App, game: library.Game):
+        super().__init__(app)
+        self.game = game
+        self.title = f"Achievements - {game.name}"
+
+    def build(self) -> None:
+        self.items = []
+        data = gamer.achievements_for(self.game.title_id)
+        self.subtitle = f"{len(data)} profile(s) have played this game"
+        for prof, achs in data:
+            got = sum(a.earned for a in achs)
+            self.items.append(Item(f"Profile {prof.xuid}  -  {got}/{len(achs)}  "
+                                   f"{sum(a.gamerscore for a in achs if a.earned)} G", header=True))
+            self.items += _achievement_items(achs)
+        if not data:
+            self.items.append(Item("No achievements yet", enabled=False))
+
+
 class UninstallScreen(Screen):
     title = "Uninstall Xenia Manager"
 
@@ -688,6 +987,9 @@ class AboutScreen(Screen):
         ("Xenia Canary", "xenia-canary"),
         ("Xenia Edge", "Xenia Edge developers"),
         ("Game patches", "xenia-canary/game-patches community"),
+        ("Xenia Netplay", "AdrianCassar/xenia-canary, Xenia-WebServices"),
+        ("Compatibility & settings data", "xenia-manager/database, optimized-settings"),
+        ("Optimized settings source", "A1eNaz's Xenia Game Settings wiki"),
         ("Batocera Linux", "batocera-linux - host OS and Xenia builds"),
         ("HippOS", "hippos-linux - host OS and Xenia builds"),
         ("File format docs", "Free60 project"),

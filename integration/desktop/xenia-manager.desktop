@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xenia Manager
+Comment=DLC, title updates, patches, per-game settings, saves and Xenia Netplay
+Exec=/userdata/system/xenia-manager/bin/xenia-manager ui
+Icon=/userdata/system/xenia-manager/assets/icon.png
+Terminal=false
+Categories=Game;batocera.linux;

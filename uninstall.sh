@@ -6,6 +6,8 @@
 #   --purge  also delete profiles, caches and downloaded patches
 #   --yes    don't ask for confirmation
 #
+# Also removes Xenia Netplay (installed by Xenia Manager); its saves are shared
+# with your other Xenia builds and are kept.
 # Never touched: your games, saves, Xenia itself, save backups
 # (/userdata/saves/xenia-manager) and the drop folder (/userdata/xbox360-content).
 
@@ -24,7 +26,7 @@ for a in "$@"; do
     case "$a" in
         --purge) PURGE=1 ;;
         --yes|-y) YES=1 ;;
-        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     esac
 done
 
@@ -46,26 +48,30 @@ pyi() {
 echo "==> Undoing any settings left by an interrupted game"
 pyx recover
 
-echo "==> Removing launch integration"
-rm -f "${USERDATA}/system/scripts/xenia-manager.sh"
-if [ -e "${USERDATA}/system/services/xenia_manager" ]; then
-    if command -v hippos-services >/dev/null 2>&1; then
-        hippos-services stop xenia_manager >/dev/null 2>&1 || true
-        hippos-services disable xenia_manager >/dev/null 2>&1 || true
-    else
-        "${USERDATA}/system/services/xenia_manager" stop >/dev/null 2>&1 || true
-    fi
-    rm -f "${USERDATA}/system/services/xenia_manager"
-fi
-pkill -f "^python3 -m xenia_manager watch" >/dev/null 2>&1 || true
+echo "==> Removing Xenia Netplay and any Xbox 360 games set to use it"
+pyx netplay remove
 
-echo "==> Removing menu entries"
-rm -f "${APPS_DIR}/xenia-manager.desktop" "${APPS_DIR}/xenia-manager-uninstall.desktop"
-rm -f "${USERDATA}/Desktop/xenia-manager.desktop"
-if [ -e "${PORTS_DIR}/${PORT_SCRIPT}" ]; then
-    pyi gamelist-remove "${PORTS_DIR}/gamelist.xml" "./${PORT_SCRIPT}"
-    rm -f "${PORTS_DIR}/${PORT_SCRIPT}" "${PORTS_DIR}/images/xenia-manager.png"
+echo "==> Removing links and the xenia_manager service"
+SERVICE="${USERDATA}/system/services/xenia_manager"
+if command -v batocera-services >/dev/null 2>&1; then
+    batocera-services stop xenia_manager >/dev/null 2>&1 || true
+    batocera-services disable xenia_manager >/dev/null 2>&1 || true
 fi
+if command -v hippos-services >/dev/null 2>&1; then
+    hippos-services stop xenia_manager >/dev/null 2>&1 || true
+    hippos-services disable xenia_manager >/dev/null 2>&1 || true
+fi
+if [ -f "${APP_DIR}/integration/service.sh" ]; then
+    bash "${APP_DIR}/integration/service.sh" unlink >/dev/null 2>&1 || true
+fi
+rm -f "${SERVICE}"
+pkill -f "^python3 -m xenia_manager watch" >/dev/null 2>&1 || true
+# files from versions before 1.2 (copied instead of linked)
+rm -f "${USERDATA}/system/scripts/xenia-manager.sh" \
+      "${APPS_DIR}/xenia-manager.desktop" "${APPS_DIR}/xenia-manager-uninstall.desktop" \
+      "${USERDATA}/Desktop/xenia-manager.desktop"
+pyi gamelist-remove "${PORTS_DIR}/gamelist.xml" "./${PORT_SCRIPT}"
+rm -f "${PORTS_DIR}/${PORT_SCRIPT}" "${PORTS_DIR}/images/xenia-manager.png"
 
 if [ "${PURGE}" -eq 1 ]; then
     echo "==> Removing per-game Xenia build choices from batocera.conf"

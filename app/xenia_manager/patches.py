@@ -118,7 +118,7 @@ def write_states(path: Path, states: dict[str, bool]) -> int:
 
 
 def _search_dirs() -> list[Path]:
-    dirs = [P.PATCH_DB_DIR]
+    dirs = [P.PATCH_DB_DIR, P.DATA_DIR / "patches-netplay"]
     for v in P.variants():
         if v.patches_dir:
             dirs.append(v.patches_dir)

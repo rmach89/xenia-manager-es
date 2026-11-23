@@ -98,7 +98,13 @@ def license_label(value: Optional[int]) -> str:
 
 
 EMULATOR_CHOICES = [("System default", None), ("Xenia Canary", "xenia-canary"),
-                    ("Xenia", "xenia"), ("Xenia Edge", "xenia-edge")]
+                    ("Xenia", "xenia"), ("Xenia Edge", "xenia-edge"), ("Xenia Netplay", "xenia-netplay")]
+
+
+def emulator_choices() -> list[tuple[str, Optional[str]]]:
+    """Builds the user can pick: Netplay only once it's installed."""
+    netplay_ready = (P.NETPLAY_DIR / ".xm-installed").exists()
+    return [c for c in EMULATOR_CHOICES if c[1] != "xenia-netplay" or netplay_ready]
 
 
 def _file(key: str) -> Path:
@@ -177,7 +183,7 @@ def export_profile(key: str, dest_dir: Path = P.EXPORT_DIR) -> Path:
 
 BATOCERA_CONF = P.HOME / "batocera.conf"
 _EMU_TO_CORE = {"xenia-canary": ("xenia-canary", "xenia-canary"), "xenia": ("xenia", "xenia"),
-                "xenia-edge": ("xenia-edge", "xenia-edge")}
+                "xenia-edge": ("xenia-edge", "xenia-edge"), "xenia-netplay": ("xenia-netplay", "xenia-netplay")}
 
 
 def set_batocera_emulator(rom_name: str, emulator: Optional[str]) -> bool:
@@ -191,6 +197,31 @@ def set_batocera_emulator(rom_name: str, emulator: Optional[str]) -> bool:
     if emulator in _EMU_TO_CORE:
         emu, core = _EMU_TO_CORE[emulator]
         kept += [f"{prefix}emulator={emu}", f"{prefix}core={core}"]
+    if kept != lines:
+        BATOCERA_CONF.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    return True
+
+
+def get_system_emulator() -> Optional[str]:
+    if not BATOCERA_CONF.is_file():
+        return None
+    for ln in BATOCERA_CONF.read_text(encoding="utf-8", errors="replace").splitlines():
+        if ln.startswith("xbox360.emulator="):
+            return ln.split("=", 1)[1].strip() or None
+    return None
+
+
+def set_system_emulator(emulator: Optional[str], only_if: Optional[str] = None) -> bool:
+    """Default Xenia build for every Xbox 360 game (xbox360.emulator / .core)."""
+    if P.detect_os() != "batocera" or not BATOCERA_CONF.is_file():
+        return False
+    if only_if is not None and get_system_emulator() != only_if:
+        return False
+    lines = BATOCERA_CONF.read_text(encoding="utf-8", errors="replace").splitlines()
+    kept = [ln for ln in lines if not ln.startswith(("xbox360.emulator=", "xbox360.core="))]
+    if emulator in _EMU_TO_CORE:
+        emu, core = _EMU_TO_CORE[emulator]
+        kept += [f"xbox360.emulator={emu}", f"xbox360.core={core}"]
     if kept != lines:
         BATOCERA_CONF.write_text("\n".join(kept) + "\n", encoding="utf-8")
     return True

@@ -27,6 +27,8 @@ BACKUP_DIR = USERDATA / "saves" / "xenia-manager" / "backups"
 EXPORT_DIR = USERDATA / "saves" / "xenia-manager" / "exports"
 INBOX_DIR = USERDATA / "xbox360-content"               # drop DLC / TUs here
 ROMS_DIR = USERDATA / "roms" / "xbox360"
+NETPLAY_DIR = HOME / "xenia-netplay"                   # Xenia Netplay (installed by us, runs under Wine)
+NETPLAY_TOML = NETPLAY_DIR / "xenia-canary-netplay.config.toml"
 DEFAULT_CONTENT_ROOT = USERDATA / "saves" / "xbox360"
 
 SHARED_XUID = "0000000000000000"
@@ -71,8 +73,17 @@ def os_label() -> str:
     return {"batocera": "Batocera", "hippos": "HippOS"}.get(detect_os(), "Unknown OS")
 
 
-@lru_cache(maxsize=1)
+def _netplay_variant() -> Variant:
+    return Variant("xenia-netplay", "Xenia Netplay", NETPLAY_TOML, NETPLAY_DIR / "patches",
+                   NETPLAY_DIR / ".xm-installed")
+
+
 def variants() -> tuple[Variant, ...]:
+    return _host_variants() + (_netplay_variant(),)
+
+
+@lru_cache(maxsize=1)
+def _host_variants() -> tuple[Variant, ...]:
     if detect_os() == "hippos":
         emu = USERDATA / "emulators"
         edge_dir = HOME / "configs" / "xenia-edge"

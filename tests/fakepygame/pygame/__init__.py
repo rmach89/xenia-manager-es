@@ -34,6 +34,7 @@ class Surface:
 
 class _Display:
     def init(self): pass
+    def quit(self): pass
     def set_mode(self, size, *a): return Surface((1280, 720) if size == (0, 0) else size)
     def set_caption(self, *a): pass
     def flip(self): pass

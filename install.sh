@@ -17,7 +17,6 @@ USERDATA="/userdata"
 APP_DIR="${USERDATA}/system/xenia-manager"
 DATA_DIR="${USERDATA}/system/configs/xenia-manager"
 INBOX_DIR="${USERDATA}/xbox360-content"
-APPS_DIR="${USERDATA}/system/.local/share/applications"
 PORTS_DIR="${USERDATA}/roms/ports"
 PORT_SCRIPT="Xenia Manager.sh"
 
@@ -87,10 +86,10 @@ rm -rf "${APP_DIR}.new"
 mkdir -p "${APP_DIR}.new"
 cp -r "${SRC}/app/xenia_manager" "${SRC}/app/bin" "${SRC}/assets" "${APP_DIR}.new/"
 cp "${SRC}/uninstall.sh" "${SRC}/LICENSE" "${SRC}/CREDITS.md" "${SRC}/README.md" "${APP_DIR}.new/"
-mkdir -p "${APP_DIR}.new/integration"
-cp "${SRC}/integration/"*.sh "${APP_DIR}.new/integration/"
+cp -r "${SRC}/integration" "${APP_DIR}.new/"
 find "${APP_DIR}.new" -name '__pycache__' -type d -prune -exec rm -rf {} +
-chmod +x "${APP_DIR}.new/bin/xenia-manager" "${APP_DIR}.new/uninstall.sh" "${APP_DIR}.new/integration/"*.sh
+chmod +x "${APP_DIR}.new/bin/xenia-manager" "${APP_DIR}.new/uninstall.sh" "${APP_DIR}.new/integration/"*.sh \
+    "${APP_DIR}.new/integration/desktop/"*.desktop
 VERSION="$(PYTHONPATH="${APP_DIR}.new" python3 -c 'import xenia_manager; print(xenia_manager.__version__)')"
 echo "${VERSION} (${REF})" >"${APP_DIR}.new/VERSION"
 rm -rf "${APP_DIR}"
@@ -109,83 +108,36 @@ EOF
 
 pyx() { PYTHONPATH="${APP_DIR}" python3 -m xenia_manager.integration "$@"; }
 
-# ---- launch integration ------------------------------------------------------
+# ---- service: links everything into place ----------------------------------
+# No changes to /usr. The xenia_manager service creates symlinks on /userdata
+# (game-start hook, menu entries, Ports / Desktop entry, Netplay emulator
+# plugin) every time it starts; the uninstaller removes them.
+SERVICES_DIR="${USERDATA}/system/services"
+SERVICE="${SERVICES_DIR}/xenia_manager"
+say "Installing the xenia_manager service"
+mkdir -p "${SERVICES_DIR}"
+rm -f "${SERVICE}"
+ln -s "${APP_DIR}/integration/service.sh" "${SERVICE}"
+chmod +x "${APP_DIR}/integration/service.sh"
+
 if [ "${OS}" = "batocera" ]; then
-    say "Adding the game-start hook (/userdata/system/scripts)"
-    mkdir -p "${USERDATA}/system/scripts"
-    cp "${APP_DIR}/integration/batocera-gamestart.sh" "${USERDATA}/system/scripts/xenia-manager.sh"
-    chmod +x "${USERDATA}/system/scripts/xenia-manager.sh"
+    command -v batocera-services >/dev/null 2>&1 && batocera-services enable xenia_manager >/dev/null 2>&1 || true
+    bash "${SERVICE}" start
 else
-    say "Adding the launch watcher service"
-    mkdir -p "${USERDATA}/system/services"
-    cp "${APP_DIR}/integration/hippos-service.sh" "${USERDATA}/system/services/xenia_manager"
-    chmod +x "${USERDATA}/system/services/xenia_manager"
     if command -v hippos-services >/dev/null 2>&1; then
         hippos-services enable xenia_manager >/dev/null 2>&1 || true
         hippos-services stop xenia_manager >/dev/null 2>&1 || true
-        hippos-services start xenia_manager >/dev/null 2>&1 || true
+        hippos-services start xenia_manager >/dev/null 2>&1 || bash "${SERVICE}" start
     else
-        "${USERDATA}/system/services/xenia_manager" stop || true
-        "${USERDATA}/system/services/xenia_manager" start || true
-        warn "hippos-services not found; started the watcher for this session only."
+        bash "${SERVICE}" stop; bash "${SERVICE}" start
+        warn "hippos-services not found; started the service for this session only."
     fi
 fi
 
-# ---- menus -------------------------------------------------------------------
-say "Adding desktop (F1) menu entries"
-mkdir -p "${APPS_DIR}"
-cat >"${APPS_DIR}/xenia-manager.desktop" <<EOF
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Xenia Manager
-Comment=DLC, title updates, patches, per-game settings and saves for Xenia
-Exec=${XM} ui
-Icon=${ICON}
-Terminal=false
-Categories=Game;batocera.linux;
-EOF
-cat >"${APPS_DIR}/xenia-manager-uninstall.desktop" <<EOF
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Xenia Manager Uninstaller
-Comment=Remove Xenia Manager
-Exec=${XM} ui --uninstall
-Icon=${ICON}
-Terminal=false
-Categories=Game;batocera.linux;
-EOF
-chmod +x "${APPS_DIR}/xenia-manager.desktop" "${APPS_DIR}/xenia-manager-uninstall.desktop"
-
-DESC="Manage Xbox 360 DLC, title updates, patches, per-game settings and saves. Changes apply when you start a game from EmulationStation."
+DESC="Manage Xbox 360 DLC, title updates, patches, per-game settings, saves and Xenia Netplay. Changes apply when you start a game from EmulationStation."
 if [ "${OS}" = "batocera" ]; then
-    say "Adding Big Screen mode to Ports"
-    mkdir -p "${PORTS_DIR}/images"
-    cat >"${PORTS_DIR}/${PORT_SCRIPT}" <<EOF
-#!/bin/bash
-# Xenia Manager - Big Screen mode (controller friendly)
-exec "${XM}" ui --bigscreen
-EOF
-    chmod +x "${PORTS_DIR}/${PORT_SCRIPT}"
-    cp "${APP_DIR}/assets/boxart.png" "${PORTS_DIR}/images/xenia-manager.png"
     pyx gamelist-add "${PORTS_DIR}/gamelist.xml" "./${PORT_SCRIPT}" "Xenia Manager" "${DESC}" "./images/xenia-manager.png" \
         || warn "Could not update the Ports game list (the entry still appears after a rescan)."
-else
-    say "Adding Big Screen mode to the Desktop shortcuts list"
-    mkdir -p "${USERDATA}/Desktop"
-    cat >"${USERDATA}/Desktop/xenia-manager.desktop" <<EOF
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Xenia Manager
-Comment=${DESC}
-Exec=${XM} ui --bigscreen
-Icon=${ICON}
-Terminal=false
-Categories=Game;
-EOF
-    chmod +x "${USERDATA}/Desktop/xenia-manager.desktop"
 fi
 
 if command -v curl >/dev/null 2>&1; then
@@ -204,4 +156,6 @@ cat <<EOF
              or: bash ${APP_DIR}/uninstall.sh
 
   Start each Xenia build once from EmulationStation so it creates its config.
+  The xenia_manager service keeps everything linked; leave it enabled
+  ($( [ "${OS}" = "batocera" ] && echo "Main menu > System settings > Services" || echo "hippos-services" )).
 EOF

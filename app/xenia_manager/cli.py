@@ -91,6 +91,33 @@ def _cmd_update(a) -> int:
     return 0
 
 
+def _cmd_netplay(a) -> int:
+    from . import netplay
+    if a.action == "status":
+        inf = netplay.info()
+        print(f"Xenia Netplay: {inf['version'] + ' (' + inf.get('channel', '') + ')' if inf else 'not installed'}")
+        print(f"  folder {P.NETPLAY_DIR}")
+    elif a.action in ("install", "update"):
+        print(f"Installed {netplay.install('nightly' if a.nightly else 'stable')}")
+    elif a.action == "remove":
+        netplay.uninstall()
+        print("Removed")
+    elif a.action == "patches":
+        print(f"{netplay.download_patches()} Netplay patches downloaded")
+    elif a.action == "launch":
+        if not a.rom:
+            raise SystemExit("launch needs a ROM path")
+        return netplay.launch(a.rom)
+    return 0
+
+
+def _cmd_online(a) -> int:
+    from . import onlinedata
+    for k, n in onlinedata.refresh().items():
+        print(f"{k}: {n}")
+    return 0
+
+
 def _cmd_status(a) -> int:
     print(f"Xenia Manager {__version__} on {P.os_label()}")
     for v in P.variants():
@@ -151,6 +178,15 @@ def main(argv=None) -> int:
     s.add_argument("--force", action="store_true", help="reinstall even if up to date")
     s.add_argument("--ref", help="branch or tag (default: the one you installed from)")
     s.set_defaults(fn=_cmd_update)
+
+    s = sub.add_parser("netplay", help="install, update, remove or launch Xenia Netplay")
+    s.add_argument("action", choices=["status", "install", "update", "remove", "patches", "launch"])
+    s.add_argument("rom", nargs="?")
+    s.add_argument("--nightly", action="store_true", help="use the newest test build")
+    s.set_defaults(fn=_cmd_netplay)
+
+    s = sub.add_parser("online-data", help="download compatibility ratings and the optimized-settings list")
+    s.set_defaults(fn=_cmd_online)
 
     s = sub.add_parser("status", help="show detected Xenia builds and paths")
     s.set_defaults(fn=_cmd_status)

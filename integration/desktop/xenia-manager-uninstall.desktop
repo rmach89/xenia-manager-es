@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xenia Manager Uninstaller
+Comment=Remove Xenia Manager
+Exec=/userdata/system/xenia-manager/bin/xenia-manager ui --uninstall
+Icon=/userdata/system/xenia-manager/assets/icon.png
+Terminal=false
+Categories=Game;batocera.linux;

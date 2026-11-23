@@ -1,0 +1,6 @@
+Metadata-Version: 2.1
+Name: xenia-manager-netplay
+Version: 1.0.0
+Summary: Registers Xenia Netplay as a batocera-launch emulator (part of Xenia Manager)
+Home-page: https://github.com/rmach89/xenia-manager-es
+License: MIT

@@ -19,6 +19,11 @@ sys.path.insert(0, str(HERE.parent / "app"))
 sys.path.insert(0, str(HERE))
 
 import pygame  # noqa: E402  (the fake)
+
+
+def profiles_mod():
+    from xenia_manager import profiles
+    return profiles
 import test_core as tc  # noqa: E402
 from xenia_manager import platform as P, tomlio, xbox  # noqa: E402
 from xenia_manager.ui import core, screens  # noqa: E402
@@ -40,6 +45,22 @@ tc.make_stfs(P.ROMS_DIR / "xbla" / "PKG", "58410B00", 0x000D0000, "Arcade")
 from xenia_manager import updater  # noqa: E402
 updater._fetch = lambda path, ref, timeout=20: b'__version__ = "9.9.9"\n'
 updater.update = lambda ref=None: "ok"
+# v1.2 fixtures: online data, a gamer profile with achievements, a Netplay "release"
+import io, json, zipfile  # noqa: E401,E402
+import test_v12_fixtures as fx  # noqa: E402
+from xenia_manager import netplay, onlinedata  # noqa: E402
+onlinedata._get = fx.fake_get
+fx.make_profile(P.content_root())
+_buf = io.BytesIO()
+with zipfile.ZipFile(_buf, "w") as _z:
+    _z.writestr("xenia_canary_netplay.exe", b"MZ")
+netplay.latest_release = lambda: ("v6.0.0", "x")
+_pbuf = io.BytesIO()
+with zipfile.ZipFile(_pbuf, "w") as _z:
+    _z.writestr("Xenia-WebServices-main/patches/4D5307E6 - Game.patch.toml", "title_id = '4D5307E6'\n")
+netplay._download = lambda url, progress=None: (_pbuf if "WebServices" in url else _buf).getvalue()
+_launched = []
+netplay.launch = lambda rom: _launched.append(rom) or 0
 
 errors = []
 orig_call = core.App.call
@@ -105,8 +126,22 @@ assert not app.running
 app.running = True
 goto("Games"); goto("Arcade"); goto("Arcade license"); press(core.RIGHT, core.RIGHT)
 press(core.BACK, core.BACK)
+# v1.2 screens
+goto("Update online data"); press(core.ACCEPT)
+goto("Xenia Netplay"); goto("Install Xenia Netplay"); press(core.ACCEPT)
+assert netplay.installed()
+goto("Use Netplay for every"); assert profiles_mod().get_system_emulator() == "xenia-netplay"
+goto("Use Netplay for every"); assert profiles_mod().get_system_emulator() == "xenia"
+goto("Emulator link"); goto("Download Netplay patches"); press(core.ACCEPT)
+press(core.BACK)
+goto("Gamer profiles"); goto("Profile E030"); goto("Back up profile only"); press(core.ACCEPT)
+goto("Halo 3"); press(core.BACK); press(core.BACK, core.BACK)
 goto("Games"); goto("Game")                      # game screen
 assert app.stack[-1].title == "Game"
+goto("Achievements"); press(core.BACK)
+goto("Compatibility"); press(core.ACCEPT)
+goto("Play time"); press(core.OPTIONS, core.ACCEPT)
+goto("Game settings"); goto("Apply community optimized settings"); press(core.ACCEPT); press(core.BACK)
 goto("Title updates"); goto("From drop folder"); press(core.ACCEPT)   # install
 settle()
 press(core.BACK)
@@ -115,9 +150,9 @@ press(core.BACK)
 goto("Patches"); goto("60 FPS"); press(core.BACK)
 goto("Game settings")
 scr = app.stack[-1]
-scr.sel = 1; press(core.RIGHT, core.RIGHT)       # resolution scale -> 2x
-scr.sel = 3; press(core.RIGHT)                    # vsync on
-goto("More settings"); app.stack[-1].sel = 1; press(core.RIGHT, core.RIGHT, core.OPTIONS); press(core.BACK)
+scr.sel = 2; press(core.RIGHT, core.RIGHT)       # resolution scale -> 2x (row 0 = optimized settings)
+scr.sel = 4; press(core.RIGHT)                    # vsync on
+goto("More settings"); app.stack[-1].sel = 2; press(core.RIGHT, core.RIGHT, core.OPTIONS); press(core.BACK)
 press(core.BACK)
 goto("Saves"); press(core.BACK)
 goto("Xenia build"); press(core.RIGHT)
@@ -136,6 +171,7 @@ print("profile:", prof.settings, prof.patches, prof.emulator)
 assert profiles.load(profiles.GLOBAL).arcade_license == -1
 assert profiles.load("58410B00").settings["Content.license_mask"] == 0, profiles.load("58410B00").settings
 assert prof.settings.get("GPU.draw_resolution_scale_x+GPU.draw_resolution_scale_y") == 2
+assert prof.settings.get("GPU.framerate_limit") == 60 and "Storage.content_root" not in prof.settings, prof.settings
 assert prof.patches and prof.emulator == "xenia"
 assert any(i.enabled for i in content.list_items(tc.TID, xbox.TYPE_TU))
 assert not any(i.enabled for i in content.list_items(tc.TID, xbox.TYPE_DLC))
